@@ -49,7 +49,7 @@ class Tx_CiTomediagalleryMigrator_Cli_RgSmoothgallery extends t3lib_cli {
 		// @todo implementation
 		
 		if($no_error) {
-			$this->cli_echo(LF.'All "goof_fotoboek" galleries have been migrated.'.LF);
+			$this->cli_echo(LF.'All "rg_smoothgallery" galleries have been migrated.'.LF);
 		} else {
 			$this->cli_echo('Execution aborded due to previous errors!'.LF);
 		}
