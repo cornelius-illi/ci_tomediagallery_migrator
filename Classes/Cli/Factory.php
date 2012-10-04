@@ -97,6 +97,8 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
 		        	//$ffTools = t3lib_div::makeInstance("t3lib_flexformtools");
 		        	//$ffTools->cleanFlexFormXML('tt_content', 'pi_flexform',$row);        	
 		        }
+		        
+		        // @todo: cli_option --forceDelete delete old t3lib_BEfunc::BEenableFields('tt_content',1);
             break;
             
     		default:
@@ -127,8 +129,13 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     }
     
     private function fetchOldPluginElements($oldListType) {
-    	$where = "CType='list' AND list_type=".$oldListType;
-    	$res = $GLOBALS['TYPO3_DB']->exec_SELECTgetRows('uid,pid,tx_gooffotoboek_path,pi_flexform','tt_content',$where);
+    	$where = "CType='list' AND list_type='".$oldListType."'";
+    	$where .= t3lib_BEfunc::deleteClause('tt_content').t3lib_BEfunc::BEenableFields('tt_content');
+    	
+    	$res = $GLOBALS['TYPO3_DB']->exec_SELECTgetRows(
+    			'uid,pid,header,tx_gooffotoboek_path,pi_flexform',
+    			'tt_content',
+    			$where);
     	if(is_null($res) || count($res) === 0 ) {
     		$this->cli_echo('Could not fetch any old plugin-elements for list_type: '.$oldListType.LF);
     		exit(0);
@@ -187,6 +194,8 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     private function createSysFolderWithPid($pid) {
     	// pre-condition: if folder exists - return
     	$where = "title='".$this->config["sys_folder_label"]. "' AND pid=".$pid;
+    	$where .= t3lib_BEfunc::deleteClause('pages').t3lib_BEfunc::BEenableFields('pages');
+    	
     	$existingFolder = $GLOBALS['TYPO3_DB']->exec_SELECTgetSingleRow("uid","pages",$where);    	
     	if($existingFolder) {
     		$this->config["entry_points"][$pid] = $existingFolder['uid'];
@@ -194,7 +203,8 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     		return;
     	}
     	
-    	$tempUid = 'NEW'.$this->generateRandomId();
+    	$tempUid = 'NEW'.uniqid();
+    	$tstamp = time();
     	
     	$data = array(
     		'pages' => array(
@@ -202,6 +212,9 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     				'pid' => $pid,
     				'title' => $this->config["sys_folder_label"],
     				'doktype' => 254,
+    				'hidden' => 0,
+    				'crdate' => $tstamp,
+    				'tstamp' => $tstamp
     			)		
     		)		
     	);
@@ -209,7 +222,12 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     	$this->tce->start($data, Array() );
     	$this->tce->process_datamap();
     	
-    	$folderUid = $tce->substNEWwithIDs[$tempUid];	
+    	if (count($this->tce->errorLog) !== 0) {
+    		var_dump($this->tce->errorLog);
+    		exit(0);
+    	}
+    	
+    	$folderUid = $this->tce->substNEWwithIDs[$tempUid];
     	
     	if(!$folderUid) {
     		$this->cli_echo('New folder could not be created!'.LF);
@@ -217,37 +235,50 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     	} else {
     		$this->config["entry_points"][$pid] = $folderUid;
     		$msg = 'New folder "'.$this->config["sys_folder_label"];
-    		$msg .= ' ('.$folderUid.')" created on page'.$pid.LF;
+    		$msg .= ' ('.$folderUid.')" created on page '.$pid.LF;
     		$this->cli_echo($msg);
     	}
     }
-    
-    private function generateRandomId($l=8) {
-    	$c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxwz0123456789";
-    	for(;$l > 0;$l--) $s .= $c{rand(0,strlen($c))};
-    	return str_shuffle($s);
-    }
        
     private function createFileCollection($row) {
-    	$tempUid = 'NEW'.$this->generateRandomId();
+    	$tempUid = 'NEW'.uniqid();
     	$pid = $this->findNextPidFor($row['pid']);
     	$path = $this->parsePath( $row["tx_gooffotoboek_path"] );
-    	 
+    	$title = $this->createFileCollectionTitle($row['header']);
     	$data = array(
     			'sys_file_collection' => array(
     					$tempUid => array (
     							'pid' => $pid,
     							'type' => 'folder',
     							'storage' => 1,
-    							'folder' => $path
+    							'folder' => $path,
+    							'title' => $title
     					)
     			)
     	);
     	
     	$this->tce->start($data, Array() );
     	$this->tce->process_datamap();
+    	
+    	if (count($this->tce->errorLog) !== 0) {
+    		var_dump($this->tce->errorLog);
+    		exit(0);
+    	}
     	 
-    	return $tce->substNEWwithIDs[$tempUid];
+    	return $this->tce->substNEWwithIDs[$tempUid];
+    }
+    
+    private function createFileCollectionTitle($row) {
+    	$header = trim( $row['header'] );
+    	if( !empty($header) ) {
+    		// return header, if not empty
+    		return $header;
+    	} else {
+			// if header is empty, use last part of path as title, e.g
+			// fileadmin/hpi/FG_ITS/fotogalerien/ausfluege/"hochseilgarten"
+    		$pathSegments = t3lib_div::trimExplode('/', $row["tx_gooffotoboek_path"], true);
+    		return $pathSegments[-1];
+    	}
     }
     
     private function parsePath($path) {
