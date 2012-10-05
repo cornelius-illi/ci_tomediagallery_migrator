@@ -39,7 +39,7 @@ $_EXTKEY = 'ci_tomediagallery_migrator';
 require_once (PATH_t3lib . 'class.t3lib_tcemain.php');
 require_once (PATH_t3lib . 'class.t3lib_befunc.php');
 
-class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
+class Tx_CiTomediagalleryMigrator_Cli_Factory extends t3lib_cli {
 	
 	protected $config;
 	protected $oldPluginElements;
@@ -263,7 +263,7 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     	$this->tce->process_datamap();
     	
     	if (count($this->tce->errorLog) !== 0) {
-    		$this->cli_error('FAILED to create sys-folder inside page: '.$pid.LF);
+    		$this->cli_echo('FAILED to create sys-folder inside page: '.$pid.LF);
     		$this->printErrorLog($this->tce->errorLog);
     		exit(0);
     	}
@@ -360,6 +360,6 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     	return $this->findNextPidFor( $row['pid'] );
     }
 }
-$factory = t3lib_div::makeInstance('Tx_CiMaintainance_Cli_Factory');
-/* @var $factory Tx_CiMaintainance_Cli_Factory */
+$factory = t3lib_div::makeInstance('Tx_CiTomediagalleryMigrator_Cli_Factory');
+/* @var $factory Tx_CiTomediagalleryMigrator_Cli_Factory */
 $factory->cli_main($_SERVER['argv']);
