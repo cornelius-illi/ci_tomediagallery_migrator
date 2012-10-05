@@ -41,14 +41,15 @@ require_once (PATH_t3lib . 'class.t3lib_befunc.php');
 
 class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
 	
-	protected $hooks;
 	protected $config;
 	protected $oldPluginElements;
+	protected $flexFormTemplate;
 	
 	function __construct() {
 		// Running parent class constructor
         parent::__construct(); // parent::previously t3lib_cli();
         
+        $this->flexFormTools = t3lib_div::makeInstance('t3lib_flexformtools');
         $this->tce = t3lib_div::makeInstance('t3lib_TCEmain');
         $this->tce->stripslashes_values = 0;
         
@@ -88,17 +89,16 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
       	switch ($oldListType) {
             case 'goof_fotoboek_pi1':
       	   		$this->importConfigurationFile($filename);
+      	   		$this->flexFormTemplate = $this->loadReferenceFlexform();
 		        $this->createSysFolders();
 		        $this->fetchOldPluginElements($oldListType);
 		        
 		        foreach($this->oldPluginElements as $row) {
 		        	$fileCollectionId = $this->createFileCollection( $row );
 		        	$this->updatePluginElement( $row, $fileCollectionId );
-		        	//$ffTools = t3lib_div::makeInstance("t3lib_flexformtools");
-		        	//$ffTools->cleanFlexFormXML('tt_content', 'pi_flexform',$row);        	
 		        }
 		        
-		        // @todo: cli_option --forceDelete delete old t3lib_BEfunc::BEenableFields('tt_content',1);
+		        // @todo: cli_option --forceDelete delete deleted=1 from db
             break;
             
     		default:
@@ -108,29 +108,69 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
         }
     }
     
+    private function loadReferenceFlexform() {
+    	// checking pre-conditions
+    	if( !array_key_exists("reference_plugin_element", $this->config ) || empty($this->config["reference_plugin_element"]) ) {
+    		$this->cli_echo('"reference_plugin_element" not specified in config-file!'.LF);
+    		exit(0);
+    	}
+    	
+    	$uid = intval($this->config["reference_plugin_element"]);
+    	if($uid === false ) {
+    		$this->cli_echo('"reference_plugin_element" is not an integer!'.LF);
+    		exit(0);
+    	}
+    	$where = 'uid='.$uid;
+    	$res = $GLOBALS['TYPO3_DB']->exec_SELECTgetSingleRow(
+    			'pi_flexform',
+    			'tt_content',
+    			$where);
+    	
+    	if(!$res) {
+    		$this->cli_echo('"reference_plugin_element" with #UID: '.$uid.' cannot be found!'.LF);
+    		exit(0);
+    	}
+    	
+    	$resArray = t3lib_div::xml2array($res['pi_flexform']);
+    	if( !is_array($resArray) ) {
+    		$this->cli_echo('flexform of "reference_plugin_element" could not be parsed:'.LF);
+    		$this->cli_echo($resArray.LF);
+    		exit(0);
+    	}
+    	
+    	return $resArray;
+    }
+    
+    private function printErrorLog($errorLog) {
+    	foreach($errorLog as $msg) {
+    		$this->cli_echo(TAB.$msg.LF);
+    	}
+    }
+    
     private function updatePluginElement($row, $fileCollectionId) {
+    	// set the $fileCollectionId;
+    	$this->flexFormTemplate["data"]["sDEF"]["lDEF"]["settings.fileCollections"]["vDEF"] = $fileCollectionId;
+    	$xml = $this->flexFormTools->flexArray2Xml($this->flexFormTemplate, true);
+    	
     	$data['tt_content'][ $row['uid'] ] = array (
-    		'list_type' => 'mediagallery_gallery'
+    		'list_type' => 'mediagallery_gallery',
+    		'pi_flexform' => $xml
     	);
     	$this->tce->start($data, Array() );
     	$this->tce->process_datamap();
-
-    	var_dump($row['pi_flexform']);
-    	$new = t3lib_BEfunc::getRecord('tt_content', $row['uid']);
-    	var_dump($new);
-    	exit(0);
     	
-    	/**
-    	 * 		pi_flexform updated automatically ?
-    	 * 		load flexform-xml
-    	 * 			insert file-collection-id
-    	 */
-       
+    	if (count($this->tce->errorLog) !== 0) {
+    		$this->cli_echo('FAILED to update plugin-element on page: '.$row['pid'].': '.LF);
+    		$this->printErrorLog($this->tce->errorLog);
+    		exit(0);
+    	} else {
+    		$this->cli_echo('Plugin-Element (tt_content:'.$row['uid'].') updated. Uses $fileCollectionId='.$fileCollectionId.LF);
+    	}
     }
     
     private function fetchOldPluginElements($oldListType) {
     	$where = "CType='list' AND list_type='".$oldListType."'";
-    	$where .= t3lib_BEfunc::deleteClause('tt_content').t3lib_BEfunc::BEenableFields('tt_content');
+    	$where .= t3lib_BEfunc::deleteClause('tt_content'); //.t3lib_BEfunc::BEenableFields('tt_content');
     	
     	$res = $GLOBALS['TYPO3_DB']->exec_SELECTgetRows(
     			'uid,pid,header,tx_gooffotoboek_path,pi_flexform',
@@ -194,7 +234,7 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     private function createSysFolderWithPid($pid) {
     	// pre-condition: if folder exists - return
     	$where = "title='".$this->config["sys_folder_label"]. "' AND pid=".$pid;
-    	$where .= t3lib_BEfunc::deleteClause('pages').t3lib_BEfunc::BEenableFields('pages');
+    	$where .= t3lib_BEfunc::deleteClause('pages'); //.t3lib_BEfunc::BEenableFields('pages');
     	
     	$existingFolder = $GLOBALS['TYPO3_DB']->exec_SELECTgetSingleRow("uid","pages",$where);    	
     	if($existingFolder) {
@@ -223,7 +263,8 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     	$this->tce->process_datamap();
     	
     	if (count($this->tce->errorLog) !== 0) {
-    		var_dump($this->tce->errorLog);
+    		$this->cli_error('FAILED to create sys-folder inside page: '.$pid.LF);
+    		$this->printErrorLog($this->tce->errorLog);
     		exit(0);
     	}
     	
@@ -244,7 +285,16 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     	$tempUid = 'NEW'.uniqid();
     	$pid = $this->findNextPidFor($row['pid']);
     	$path = $this->parsePath( $row["tx_gooffotoboek_path"] );
-    	$title = $this->createFileCollectionTitle($row['header']);
+    	
+    	// check if already exists in this folder
+    	$where = 'pid='.$pid.' AND folder="'.$path.'"';
+    	$res = $GLOBALS['TYPO3_DB']->exec_SELECTgetSingleRow('uid,title','sys_file_collection',$where);
+    	if($res) {
+    		$this->cli_echo('Found existing file_collection: '.$res['title'].'(#'.$res['uid'].')'.LF);
+    		return $res['uid'];
+    	}
+    	
+    	$title = $this->createFileCollectionTitle($row);
     	$data = array(
     			'sys_file_collection' => array(
     					$tempUid => array (
@@ -261,8 +311,11 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
     	$this->tce->process_datamap();
     	
     	if (count($this->tce->errorLog) !== 0) {
-    		var_dump($this->tce->errorLog);
+    		$this->cli_echo("FAILED to create fileCollection on page:".$pid.LF);
+    		$this->printErrorLog($this->tce->errorLog);
     		exit(0);
+    	} else {
+    		$this->cli_echo('File-Collection "'.$title.'" successfully created on pid#'.$pid.LF);
     	}
     	 
     	return $this->tce->substNEWwithIDs[$tempUid];
@@ -277,18 +330,28 @@ class Tx_CiMaintainance_Cli_Factory extends t3lib_cli {
 			// if header is empty, use last part of path as title, e.g
 			// fileadmin/hpi/FG_ITS/fotogalerien/ausfluege/"hochseilgarten"
     		$pathSegments = t3lib_div::trimExplode('/', $row["tx_gooffotoboek_path"], true);
-    		return $pathSegments[-1];
+    		return $pathSegments[ count($pathSegments)-1 ];
     	}
     }
     
     private function parsePath($path) {
-    	$pos = strripos($path,'fileadmin');
-    	if($pos === false) return $path;
-    	return substr($path, $pos);
+    	$returnPath = "";
+    	
+    	$word = 'fileadmin';
+    	$pos = strripos($path,$word);
+    	if($pos === false) {
+    		$returnPath = $path;
+    	} else {
+    	 	$returnPath = substr($path, ($pos+strlen($word)));
+    	}
+    	
+    	// add tailing slash
+    	if ( substr($returnPath,-1) !== "/") $returnPath .= "/";
+    	return $returnPath;
     }
     
     private function findNextPidFor($pid) {
-    	if( array_key_exists($pid, $this->config['entry_points'] ) ) return $pid;
+    	if( array_key_exists($pid, $this->config['entry_points'] ) ) return $this->config['entry_points'][$pid];
     	$row = $GLOBALS['TYPO3_DB']->exec_SELECTgetSingleRow('pid','pages','uid='.$pid);
     	if(!$row) {
     		$this->cli_echo('Failed to find next page up in hierarchy.'.LF);
